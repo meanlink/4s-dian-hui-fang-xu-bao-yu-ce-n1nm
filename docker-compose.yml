@@ -1,0 +1,82 @@
+name: dealer-renewal-score
+x-python: &python
+  image: dealer-renewal-score-app:1
+  build: ./backend
+  environment: &app-env
+    DB_HOST: db
+    DB_NAME: dealer_renewal
+    DB_USER: dealer
+    DB_PASSWORD: ${MYSQL_PASSWORD:-dealer_local_pw}
+    REDIS_URL: redis://redis:6379/0
+    JWT_SECRET: ${JWT_SECRET:-dealer-renewal-demo-secret-change-before-sharing}
+    TZ: Asia/Shanghai
+  depends_on:
+    db: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  volumes:
+    - dealer-runtime:/run/dealer-renewal
+services:
+  db:
+    image: mysql:8.0
+    container_name: ${COMPOSE_PROJECT_NAME:-dealer-renewal-score}-db
+    environment:
+      MYSQL_DATABASE: dealer_renewal
+      MYSQL_USER: dealer
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-dealer_local_pw}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-dealer_local_root}
+    ports:
+      - '127.0.0.1:${DB_PORT:-17753}:3306'
+    volumes:
+      - dealer-data:/var/lib/mysql
+      - ./backend/migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'mysql --protocol=tcp -h 127.0.0.1 -u dealer -p"$$MYSQL_PASSWORD" dealer_renewal -e "SELECT 1 FROM owners LIMIT 0"']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-dealer-renewal-score}-redis
+    volumes:
+      - dealer-cache:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  backend:
+    <<: *python
+    container_name: ${COMPOSE_PROJECT_NAME:-dealer-renewal-score}-backend
+    command: [sh, -c, 'python -m scripts.seed_demo && exec uvicorn src.app:app --host 0.0.0.0 --port 8000']
+    ports:
+      - '127.0.0.1:${BACKEND_PORT:-19253}:8000'
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)']
+      interval: 3s
+      timeout: 3s
+      retries: 25
+  worker:
+    <<: *python
+    container_name: ${COMPOSE_PROJECT_NAME:-dealer-renewal-score}-worker
+    command: [python, -m, src.worker]
+    healthcheck:
+      test: [CMD, python, -c, 'import os,time; assert time.time() - os.stat("/run/dealer-renewal/worker").st_mtime < 10']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  frontend:
+    build: ./frontend
+    container_name: ${COMPOSE_PROJECT_NAME:-dealer-renewal-score}-frontend
+    depends_on:
+      backend: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:${FRONTEND_PORT:-18253}:80'
+    healthcheck:
+      test: [CMD, wget, -qO, /dev/null, 'http://127.0.0.1/health']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+volumes:
+  dealer-data:
+  dealer-cache:
+  dealer-runtime:

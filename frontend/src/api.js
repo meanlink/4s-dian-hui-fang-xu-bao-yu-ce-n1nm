@@ -1,0 +1,2 @@
+import {state,setToken} from './store.js';
+export async function api(path, options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const response=await fetch('/api'+path,{...options,headers});const data=await response.json().catch(()=>({detail:'响应格式错误'}));if(response.status===401){setToken(null);window.dispatchEvent(new Event('dealer-expired'));}if(!response.ok)throw new Error(data.detail||`请求失败 ${response.status}`);return data;}
